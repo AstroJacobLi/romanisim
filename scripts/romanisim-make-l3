@@ -42,7 +42,7 @@ if __name__ == '__main__':
     parser.add_argument('--effreadnoise', type=float, default=None,
                         help='effective readnoise per pixel in MJy/sr.  If '
                         'None, a pessimistic estimate is computed.')
-    parser.add_argument('--nexposures', type=float, default=1,
+    parser.add_argument('--nexposures', type=int, default=1,
                         help='number of exposures on field.  Used only '
                         'to compute the effective read noise.')
     parser.add_argument('--rng_seed', type=int, default=None)
@@ -65,8 +65,13 @@ if __name__ == '__main__':
         (midpoint, midpoint), pixscale, center)
 
     metadata = deepcopy(parameters.default_mosaic_parameters_dictionary)
+    if args.radec is not None:
+        metadata['wcsinfo']['ra_ref'] = r
+        metadata['wcsinfo']['dec_ref'] = d
+        log.info(f'Setting WCS reference to RA_ref={r}, Dec_ref={d}')
+
     if args.date is not None:
-        metadata['basic']['time_mean_mjd'] = Time(args.date, format='isot').mjd
+        metadata['coadd_info']['time_mean'] = Time(args.date, format='isot')
     metadata['filename'] = os.path.basename(args.filename)
 
     cat = ris.create_catalog(metadata=metadata, catalog_name=args.catalog,
@@ -75,7 +80,7 @@ if __name__ == '__main__':
     im, extras = l3.simulate(
         (args.npix, args.npix), twcs, args.exptime, args.bandpass,
         cat, effreadnoise=args.effreadnoise, nexposures=args.nexposures,
-        metadata=metadata)
+        metadata=metadata, seed=args.rng_seed, rng=None)
 
     # Create metadata for simulation parameter
     romanisimdict = deepcopy(vars(args))
