@@ -152,7 +152,7 @@ def inject_sources_into_l3(model, cat, x=None, y=None, psf=None, rng=None,
     if psf is None:
         if (pixscalefrac > 1) or (pixscalefrac < 0):
             raise ValueError('weird pixscale!')
-        psf = l3_psf(filter_name, pixscalefrac, stpsf=True, chromatic=False)
+        psf = l3_psf(filter_name, pixscalefrac, stpsf=stpsf, chromatic=False)
     sca = romanisim.parameters.default_sca
     maggytoes = romanisim.bandpass.get_abflux(filter_name, sca)
     etomjysr = romanisim.bandpass.etomjysr(filter_name, sca) / pixscalefrac ** 2
@@ -183,7 +183,7 @@ def inject_sources_into_l3(model, cat, x=None, y=None, psf=None, rng=None,
 
     model.var_poisson = (model.data / Ct_all)
 
-    return res
+    return res, psf
 
 
 
