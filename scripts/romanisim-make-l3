@@ -46,6 +46,7 @@ if __name__ == '__main__':
                         help='number of exposures on field.  Used only '
                         'to compute the effective read noise.')
     parser.add_argument('--rng_seed', type=int, default=None)
+    parser.add_argument('--psf_fov_arcsec', type=float, default=5, help='size of PSF in arcsec')
 
     args = parser.parse_args()
 
@@ -81,7 +82,7 @@ if __name__ == '__main__':
     im, extras = l3.simulate(
         (args.npix, args.npix), twcs, args.exptime, args.bandpass,
         cat, effreadnoise=args.effreadnoise, nexposures=args.nexposures,
-        metadata=metadata, seed=args.rng_seed, rng=None)
+        metadata=metadata, seed=args.rng_seed, rng=None, psf_fov_arcsec=args.psf_fov_arcsec)
 
     # Create metadata for simulation parameter
     romanisimdict = deepcopy(vars(args))
