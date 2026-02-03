@@ -4,6 +4,7 @@ Based on galsim's implementation of Roman image simulation.  Uses galsim Roman m
 for most of the real work.
 """
 
+import copy
 import math
 import numpy as np
 import galsim
@@ -17,9 +18,8 @@ import romanisim.psf
 import romanisim.image
 import romanisim.persistence
 import romanisim.parameters
+from roman_datamodels.datamodels import MosaicModel
 import romanisim.util
-import roman_datamodels.datamodels as rdm
-from roman_datamodels.stnode import WfiMosaic
 import astropy.units as u
 import astropy
 from galsim import roman
@@ -62,15 +62,15 @@ def add_objects_to_l3(l3_mos, source_cat, exptimes, xpos, ypos, psf,
 
     Returns
     -------
-    Information from romanisim.image.add_objects_to_image.  Note
-    that l3_mos is updated in place.
+    outinfo: Information from romanisim.image.add_objects_to_image.  Note
+        that l3_mos is updated in place.
     """
     # Obtain optical element
     if filter_name is None:
         filter_name = l3_mos.meta.instrument.optical_element
 
     # Create Image canvas to add objects to
-    if isinstance(l3_mos, (rdm.MosaicModel, WfiMosaic)):
+    if isinstance(l3_mos, (MosaicModel, MosaicModel._node_type)):
         sourcecountsall = galsim.ImageF(
             np.array(l3_mos.data), wcs=romanisim.wcs.GWCS(l3_mos.meta.wcs),
             xmin=0, ymin=0)
@@ -86,14 +86,18 @@ def add_objects_to_l3(l3_mos, source_cat, exptimes, xpos, ypos, psf,
         rng=rng, seed=seed, add_noise=True)
 
     # Save array with added sources
-    if isinstance(l3_mos, (rdm.MosaicModel, WfiMosaic)):
+    if isinstance(l3_mos, (MosaicModel, MosaicModel._node_type)):
         l3_mos.data = sourcecountsall.array
 
     return outinfo
 
 
 def inject_sources_into_l3(model, cat, x=None, y=None, psf=None, rng=None,
+<<<<<<< HEAD
                            stpsf=True, exptimes=None, seed=None, fov_arcsec=10):
+=======
+                           psftype='galsim', fastpointsources=True, exptimes=None, seed=None, return_info=False):
+>>>>>>> upstream-main
     """Inject sources into an L3 image.
 
     This routine allows sources to be injected onto an existing L3 image.
@@ -128,31 +132,43 @@ def inject_sources_into_l3(model, cat, x=None, y=None, psf=None, rng=None,
         galsim random number generator to use
     seed : int
         Seed to use for rng
-    stpsf: bool
-        if True, use Stpsf to model the PSF
+    psftype : One of ['epsf', 'galsim', 'stpsf']
+        How to determine the PSF.
+    return_info: bool
+        if True, return information from romanisim.image.add_objects_to_image.
 
     Returns
     -------
-    outinfo : np.ndarray with information about added sources
+    res_model : roman_datamodels.datamodels.WfiMosaic
+        model with additional sources
+    res : bool (optional)
+        information from romanisim.image.add_objects_to_image.
     """
+
+    res_model = copy.deepcopy(model)
+
     if seed is None:
         seed = 125
     if rng is None:
         rng = galsim.UniformDeviate(seed)
 
     if x is None or y is None:
-        x, y = model.meta.wcs.numerical_inverse(cat['ra'].value, cat['dec'].value,
+        x, y = res_model.meta.wcs.numerical_inverse(cat['ra'].value, cat['dec'].value,
                                                 with_bounding_box=False)
 
-    filter_name = model.meta.instrument.optical_element
+    filter_name = res_model.meta.instrument.optical_element
     cat = romanisim.catalog.table_to_catalog(cat, [filter_name])
 
-    wcs = romanisim.wcs.GWCS(model.meta.wcs)
-    pixscalefrac = get_pixscalefrac(wcs, model.data.shape)
+    wcs = romanisim.wcs.GWCS(res_model.meta.wcs)
+    pixscalefrac = get_pixscalefrac(wcs, res_model.data.shape)
     if psf is None:
         if (pixscalefrac > 1) or (pixscalefrac < 0):
             raise ValueError('weird pixscale!')
+<<<<<<< HEAD
         psf = l3_psf(filter_name, pixscalefrac, stpsf=stpsf, chromatic=False, fov_arcsec=fov_arcsec)
+=======
+        psf = l3_psf(filter_name, pixscalefrac, psftype=psftype, chromatic=False, date=model.meta.coadd_info.time_mean, variable=fastpointsources)
+>>>>>>> upstream-main
     sca = romanisim.parameters.default_sca
     maggytoes = romanisim.bandpass.get_abflux(filter_name, sca)
     etomjysr = romanisim.bandpass.etomjysr(filter_name, sca) / pixscalefrac ** 2
@@ -162,28 +178,35 @@ def inject_sources_into_l3(model, cat, x=None, y=None, psf=None, rng=None,
         # Set scaling factor for injected sources
         # Flux / sigma_p^2
         xidx, yidx = int(np.round(x0)), int(np.round(y0))
-        if model.var_poisson[yidx, xidx] != 0:
+        if res_model.var_poisson[yidx, xidx] != 0:
             Ct.append(math.fabs(
-                model.data[yidx, xidx] /
-                model.var_poisson[yidx, xidx]))
+                res_model.data[yidx, xidx] /
+                res_model.var_poisson[yidx, xidx]))
         else:
             Ct.append(1.0)
     Ct = np.array(Ct)
     # etomjysr = 1/C; C converts fluxes to electrons
     exptimes = Ct * etomjysr
 
-    Ct_all = (model.data /
-              (model.var_poisson + (model.var_poisson == 0)))
+    Ct_all = (res_model.data /
+              (res_model.var_poisson + (res_model.var_poisson == 0)))
 
     # compute the total number of counts we got from the source
     res = add_objects_to_l3(
-        model, cat, exptimes, x, y, psf, etomjysr=etomjysr,
+        res_model, cat, exptimes, x, y, psf, etomjysr=etomjysr,
         maggytoes=maggytoes, filter_name=filter_name, bandpass=None,
         rng=rng)
 
-    model.var_poisson = (model.data / Ct_all)
+    res_model.var_poisson = (res_model.data / Ct_all)
 
+<<<<<<< HEAD
     return res, psf
+=======
+    if return_info:
+        return res_model, res
+    else:
+        return res_model
+>>>>>>> upstream-main
 
 
 
@@ -277,8 +300,14 @@ def l3_psf(bandpass, scale=0, chromatic=False, **kw):
 
 def simulate(shape, wcs, efftimes, filter_name, catalog, nexposures=1,
              metadata={},
+<<<<<<< HEAD
              effreadnoise=None, sky=None, psf=None, psf_fov_arcsec=5,
              bandpass=None, seed=None, rng=None, stpsf=True,
+=======
+             effreadnoise=None, sky=None, psf=None,
+             bandpass=None, seed=None, rng=None, psftype='galsim', 
+             fastpointsources=True,
+>>>>>>> upstream-main
              **kwargs):
     """Simulate a sequence of observations on a field in different bandpasses.
 
@@ -312,10 +341,10 @@ def simulate(shape, wcs, efftimes, filter_name, catalog, nexposures=1,
     bandpass : galsim.Bandpass
         Bandpass in which mosaic is being rendered. This is used only in cases
         where chromatic profiles & PSFs are being used.
-    stpsf : bool
-        Use stpsf to compute PSF
     rng : galsim.BaseDeviate
         random number generator to use
+    psftype : One of ['epsf', 'galsim', 'stpsf']
+        How to determine the PSF.
     seed : int
         seed to use for random number generator
 
@@ -330,7 +359,7 @@ def simulate(shape, wcs, efftimes, filter_name, catalog, nexposures=1,
     """
 
     # Create metadata object
-    mosaic_node = WfiMosaic.create_fake_data()
+    mosaic_node = MosaicModel._node_type.create_fake_data()
     meta = mosaic_node.meta
 
     # add romanisim defaults
@@ -401,7 +430,7 @@ def simulate(shape, wcs, efftimes, filter_name, catalog, nexposures=1,
         # note that we are ignoring all of the individual reads, which also
         # contribute to reducing the effective read noise.  Pass --effreadnoise
         # if you want to do better than this!
-        effreadnoise = effreadnoise.to(u.electron).value * etomjysr
+        effreadnoise = effreadnoise * etomjysr  # electron -> MJy/sr
         # converting to MJy/sr units
     else:
         effreadnoise = 0
@@ -414,8 +443,14 @@ def simulate(shape, wcs, efftimes, filter_name, catalog, nexposures=1,
     if psf is None:
         if (pixscalefrac > 1) or (pixscalefrac < 0):
             raise ValueError('weird pixscale!')
+<<<<<<< HEAD
         psf = l3_psf(filter_name, pixscalefrac, stpsf=stpsf,
                      chromatic=chromatic, fov_arcsec=psf_fov_arcsec)
+=======
+        psf = l3_psf(filter_name, pixscalefrac, psftype=psftype, 
+                     variable=fastpointsources, # enabling fastpointsources
+                     chromatic=chromatic, date=meta['coadd_info']['time_mean'])
+>>>>>>> upstream-main
 
     # Simulate mosaic cps
     mosaic, extras = simulate_cps(
@@ -749,7 +784,7 @@ def add_more_metadata(metadata, efftimes, filter_name, wcs, shape, nexposures):
         pscale.to(u.arcsec).value / romanisim.parameters.pixel_scale)
     metadata['resample']['pixfrac'] = 0
     # our simulations sort of imply idealized 0 droplet size
-    metadata['resample']['pointings'] = nexposures
+    metadata['resample']['pointings'] = int(nexposures)
     xref, yref = wcs.world_to_pixel_values(
         metadata['wcsinfo']['ra_ref'], metadata['wcsinfo']['dec_ref'])
     metadata['wcsinfo']['x_ref'] = xref

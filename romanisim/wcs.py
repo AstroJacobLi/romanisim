@@ -27,6 +27,7 @@ import astropy.time
 import roman_datamodels
 import gwcs.geometry
 from gwcs import coordinate_frames as cf
+import galsim
 import gwcs.wcs
 import galsim.wcs
 from galsim import roman
@@ -150,7 +151,8 @@ def get_wcs(image, usecrds=True, distortion=None):
         # therefore requires a date.
         wcs_dict = roman.getWCS(world_pos=util.celestialcoord(world_pos),
                                 SCAs=sca,
-                                date=date.datetime)
+                                date=date.datetime,
+                                PA=image_mod.meta.pointing.pa_aperture * galsim.degrees)
         wcs = wcs_dict[sca]
     return wcs
 
@@ -291,14 +293,16 @@ class GWCS(galsim.wcs.CelestialWCS):
             return r, d
 
     def _xy(self, ra, dec, color=None):
-        # _xy accepts ra/dec in radians; we decorate r1, d1 appropriately.
-        r1 = np.atleast_1d(ra) * u.rad
-        d1 = np.atleast_1d(dec) * u.rad
+        # _xy accepts ra/dec in radians.
+        # Convert ra/dec to degrees before passing them to the WCS
+        # which defines the output units to be "deg".
 
+        r1 = np.rad2deg(np.atleast_1d(ra))
+        d1 = np.rad2deg(np.atleast_1d(dec))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            # x, y = self.wcs.world_to_pixel(r1, d1)
-            x, y = self.wcs.numerical_inverse(r1, d1, with_bounding_box=False)
+            x, y = self.wcs.invert(r1, d1, with_bounding_box=False)
+            # x, y = self.wcs.numerical_inverse(r1, d1, with_bounding_box=False)
 
         if np.ndim(ra) == np.ndim(dec) == 0:
             return x[0], y[0]

@@ -13,10 +13,10 @@ from astropy import units as u
 from astropy.io import fits
 import astropy_healpix
 import astropy.time
-from astroquery.gaia import Gaia
 from romanisim import gaia as rsim_gaia
 from . import util, log, parameters
 import romanisim.bandpass
+import yaml
 
 # COSMOS constants taken from the COSMOS2020 paper:
 # https://arxiv.org/pdf/2110.13923
@@ -169,6 +169,7 @@ def make_dummy_table_catalog(coord,
     if cosmos:
         t1 = make_cosmos_galaxies(coord, radius=radius, rng=rng,
                                   bandpasses=bandpasses, **kwargs)
+        t1 = t1[:int(nobj * 0.8)]
     else:
         t1 = make_galaxies(coord, radius=radius, rng=rng, n=int(nobj * 0.8),
                            bandpasses=bandpasses)
@@ -243,6 +244,7 @@ def make_cosmos_galaxies(coord,
                 cos_filt.append('UVISTA_Ks_FLUX_AUTO')
             if opt_elem in ("F158", "F184", "F146"):
                 cos_filt.append('UVISTA_H_FLUX_AUTO')
+    cos_filt = list(set(cos_filt))
 
     # Open COSMOS file and pare to required tabs
     if filename:
@@ -273,9 +275,18 @@ def make_cosmos_galaxies(coord,
     cos_cat_all = cos_cat_all[cos_cat_all['ACS_B_WORLD'] > 0]
     cos_cat_all = cos_cat_all[cos_cat_all['ACS_A_WORLD'] > 0]
 
+    # Set negative fluxes to zero
+    for opt_elem in cos_filt:
+        cos_cat_all[opt_elem][cos_cat_all[opt_elem] < 0] = 0
+
+    # Drop sources with no flux in the requested bandpasses
+    good = np.zeros(len(cos_cat_all), dtype='bool')
+    for filt in cos_filt:
+        good |= cos_cat_all[filt] > 0
+    cos_cat_all = cos_cat_all[good]
+
     # Filter for flags
     cos_filt += ["ID", "FLUX_RADIUS", "ACS_A_WORLD", "ACS_B_WORLD"]
-    cos_filt = list(set(cos_filt))
 
     # Trim catalog
     cos_cat = cos_cat_all[cos_filt]
@@ -478,6 +489,7 @@ def make_gaia_stars(coord,
     if date is None:
         date = astropy.time.Time('2026-01-01T00:00:00')
 
+    from astroquery.gaia import Gaia
     # Perform Gaia search
     q = f'select * from gaiadr3.gaia_source where distance({coord.ra.value}, {coord.dec.value}, ra, dec) < {radius}'
     job = Gaia.launch_job_async(q)
@@ -518,7 +530,7 @@ def read_one_healpix(filename,
     """
 
     # Open healpix file
-    cat_table = table.Table.read(filename, bandpasses)
+    cat_table = table.Table.read(filename)
 
     # Check for RSIM Gaia catalog
     if 'phot_g_mean_mag' in cat_table.colnames:
@@ -674,10 +686,16 @@ def image_table_to_catalog(table, bandpasses):
         raise ValueError(
             'catalog file name must be present in table metadata.')
     rgc = galsim.RealGalaxyCatalog(table.meta['real_galaxy_catalog_filename'])
+
+    # Convert coordinates to radians to be loaded into GalSim objects.
+
+    allpos = coordinates.SkyCoord(table['ra'] * u.deg, table['dec'] * u.deg,
+                                  frame='icrs')
+    all_ra_radians = allpos.ra.to(u.rad).value * galsim.radians
+    all_dec_radians = allpos.dec.to(u.rad).value * galsim.radians
+
     for i in range(len(table)):
-        pos = coordinates.SkyCoord(table['ra'][i] * u.deg, table['dec'][i] * u.deg,
-                                   frame='icrs')
-        pos = util.celestialcoord(pos)
+        pos = galsim.CelestialCoord(all_ra_radians[i], all_dec_radians[i])
         fluxes = {bp: table[bp][i] for bp in bandpasses}
         obj = galsim.RealGalaxy(rgc, id=table['ident'][i])
         obj = obj.shear(
@@ -789,10 +807,16 @@ def table_to_catalog(table, bandpasses):
         return image_table_to_catalog(table, bandpasses)
 
     out = list()
+
+    # Convert coordinates to radians to be loaded into GalSim objects.
+
+    allpos = coordinates.SkyCoord(table['ra'] * u.deg, table['dec'] * u.deg,
+                                  frame='icrs')
+    all_ra_radians = allpos.ra.to(u.rad).value * galsim.radians
+    all_dec_radians = allpos.dec.to(u.rad).value * galsim.radians
+
     for i in range(len(table)):
-        pos = coordinates.SkyCoord(table['ra'][i] * u.deg, table['dec'][i] * u.deg,
-                                   frame='icrs')
-        pos = util.celestialcoord(pos)
+        pos = galsim.CelestialCoord(all_ra_radians[i], all_dec_radians[i])
         fluxes = {bp: table[bp][i] for bp in bandpasses}
         if table['type'][i] == 'PSF':
             obj = galsim.DeltaFunction()
@@ -821,16 +845,22 @@ def read_catalog(filename,
     Parameters
     ----------
     filename : str or None
-        Filename of catalog or directory to read
-        If None, will call Gaia website
+        Filename of catalog, or directory containing healpix catalogs, or None.
+        If None, will query Gaia catalog at the provided `coord`.
     coord : astropy.coordinates.SkyCoord
-        Location around which to generate sources.
+        Location around which to generate sources. Not used if the provided
+        `filename` is a single catalog file.
     date : astropy.time.Time
-        Optional argument to provide a date and time for stellar search
+        Optional argument to provide a date and time for catalog query.
+        Not used if the provided `filename` is a single catalog file.
     bandpasses : list[str]
         Bandpasses for which fluxes are tabulated in the catalog
     radius: float
         Radius over which to search healpix for source file indicies
+
+    Any additional keyword arguments provided will be passed to
+    `make_gaia_stars` if the `filename` argument is None or 
+    `read_one_healpix` if `filename` is a directory of healpix catalogs.
 
     Returns
     -------
@@ -850,23 +880,39 @@ def read_catalog(filename,
         cat = make_gaia_stars(coord, radius=radius, date=date, **kwargs)
     elif os.path.isdir(filename):
         # Healpix catalogs within a directory
+        metafilename = os.path.join(filename, 'meta.yaml')
+        if os.path.exists(metafilename):
+            meta = yaml.safe_load(open(metafilename, 'rb'))
+        else:
+            meta = dict()
+        nside = meta.get('nside', 128)
 
         # Set parameters of Healpix
-        hp = astropy_healpix.HEALPix(nside=128, order='nested', frame=coordinates.Galactic())
+        hp = astropy_healpix.HEALPix(
+            nside=nside, order='nested', frame=coordinates.Galactic())
 
         # Find Healpix
         hp_cone = hp.cone_search_skycoord(util.skycoord(coord), radius=radius * u.deg)
 
-        # Create initial catalog
-        hp_filename = filename + f"/cat-{hp_cone[0]}.fits"
-        cat = read_one_healpix(hp_filename, date, bandpasses, **kwargs)
+        # Create catalog from one or more of the input healpix files.
+        # If an expected file is missing, skip it.  If none of the
+        # expected files are present, raise a FileNotFoundError.
 
-        # Append additional healpix catalogs
-        if len(hp_cone > 1):
-            for hp_idx in hp_cone[1:]:
-                hp_filename = filename + f"/cat-{hp_idx}.fits"
+        cat = None
+        for i, healpix_index in enumerate(hp_cone):
+            log.info(f'Loading healpix catalog file {i + 1} of {len(hp_cone)}')
+            hp_filename = filename + f"/cat-{healpix_index}.fits"
+            if os.path.isfile(hp_filename):
                 hp_table = read_one_healpix(hp_filename, date, bandpasses, **kwargs)
-                cat = table.vstack([cat, hp_table])
+                if cat is None:
+                    cat = hp_table
+                else:
+                    cat = table.vstack([cat, hp_table])
+            else:
+                log.warning(f'Healpix index {healpix_index} is within the '
+                            f'cone search but its catalog file was not found.')
+        if cat is None:
+            raise FileNotFoundError("No files found in healpix cone search!")
     else:
         # Catalog file
         cat = table.Table.read(filename)

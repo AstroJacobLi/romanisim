@@ -1,7 +1,6 @@
 """
 Unit tests for wcs module.
 """
-import os
 import copy
 import numpy as np
 from astropy.modeling import rotations, projections, models
@@ -10,7 +9,6 @@ from astropy import units as u
 from astropy.time import Time
 from romanisim import wcs, util, parameters
 import galsim
-import pytest
 
 import roman_datamodels
 
@@ -41,12 +39,12 @@ def test_wcs():
     distortion = make_fake_distortion_function()
     cc = SkyCoord(ra=0 * u.deg, dec=0 * u.deg)
     gwcs = wcs.make_wcs(cc, distortion)
-    assert cc.separation(gwcs(0, 0, with_units=True)).to(u.arcsec).value < 1e-3
+    assert cc.separation(gwcs.pixel_to_world(0, 0)).to(u.arcsec).value < 1e-3
     cc2 = SkyCoord(ra=0 * u.deg, dec=0.11 * u.arcsec)
-    assert cc2.separation(gwcs(0, 1, with_units=True)).to(u.arcsec).value < 1e-2
+    assert cc2.separation(gwcs.pixel_to_world(0, 1)).to(u.arcsec).value < 1e-2
     # a tenth of a pixel
     cc3 = SkyCoord(ra=0.11 * u.arcsec, dec=0 * u.deg)
-    assert cc3.separation(gwcs(1, 0, with_units=True)).to(u.arcsec).value < 1e-2
+    assert cc3.separation(gwcs.pixel_to_world(1, 0)).to(u.arcsec).value < 1e-2
     wcsgalsim = wcs.GWCS(gwcs)
     assert wcsgalsim.wcs is gwcs
     assert ((wcsgalsim.origin.x == 0) and (wcsgalsim.origin.y == 0))
@@ -59,6 +57,11 @@ def test_wcs():
                        [cc2.ra / galsim.degrees, cc2.dec / galsim.degrees])
     pos2 = wcsgalsim.toImage(cc1)
     assert np.allclose([pos.x, pos.y], [pos2.x, pos2.y])
+
+    # Using direct unit input to Galsim we should get identical results
+    pos3 = wcsgalsim.toImage(cc1.ra.deg, cc1.dec.deg, units="deg")
+    assert np.all((pos2.x, pos2.y) == pos3)
+ 
     # also try some arrays
     xx = np.random.uniform(0, 4096, 100)
     yy = np.random.uniform(0, 4096, 100)
@@ -118,12 +121,6 @@ def test_wcs_from_fits_header():
     assert np.max(sep) < 1e-5
 
 
-@pytest.mark.skipif(
-    os.environ.get("CI") == "true",
-    reason=(
-        "Roman CRDS servers are not currently available outside the internal network"
-    ),
-)
 def test_wcs_crds_match():
     # Set up parameters for simulation run
 

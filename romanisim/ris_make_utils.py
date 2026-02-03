@@ -13,11 +13,12 @@ from astropy import units as u
 import galsim
 from galsim import roman
 import roman_datamodels
-from roman_datamodels import stnode
 from romanisim import catalog, image, wcs
 from romanisim import parameters, log
 from romanisim.util import calc_scale_factor
 import romanisim
+import crds
+from crds.client import api
 
 
 NMAP = {'apt': 'http://www.stsci.edu/Roman/APT'}
@@ -49,7 +50,7 @@ def merge_nested_dicts(dict1, dict2):
 
 
 def set_metadata(meta=None, date=None, bandpass='F087', sca=7,
-                 ma_table_number=4, truncate=None, scale_factor=1.0):
+                 ma_table_number=4, truncate=None, scale_factor=1.0, usecrds=False):
     """
     Set / Update metadata parameters
 
@@ -67,6 +68,8 @@ def set_metadata(meta=None, date=None, bandpass='F087', sca=7,
         Integer specifying which MA Table entry to use
     scale_factor : float
         Velocity aberration-induced scale factor
+    usecrds : bool
+        Use CRDS to get MA table reference file
 
     Returns
     -------
@@ -88,12 +91,28 @@ def set_metadata(meta=None, date=None, bandpass='F087', sca=7,
     # Observational metadata
     meta['instrument']['optical_element'] = bandpass
     meta['exposure']['ma_table_number'] = ma_table_number
-    meta['exposure']['read_pattern'] = parameters.read_pattern[ma_table_number]
+    if usecrds:
+        try:
+            context = api.get_default_context('roman')
+        except crds.ServiceError:
+            context = None
+        ref = crds.getreferences({'ROMAN.META.INSTRUMENT.NAME': 'wfi', 'ROMAN.META.EXPOSURE.START_TIME': meta['exposure']['start_time'].value}, reftypes=['matable'], context=context, observatory='roman')
+        matab_file = ref['matable']
+        matab = asdf.open(matab_file)
+
+        parameters.ma_table_reference = matab
+
+        meta['exposure']['read_pattern'] = matab['roman']['science_tables'][f'SCI{ma_table_number:04}']['science_read_pattern']
+    else:
+        meta['exposure']['read_pattern'] = parameters.read_pattern[ma_table_number]
+
     if truncate is not None:
         meta['exposure']['read_pattern'] = meta['exposure']['read_pattern'][:truncate]
         meta['exposure']['truncated'] = True
     else:
         meta['exposure']['truncated'] = False
+
+    meta['exposure']['nresultants'] = len(meta['exposure']['read_pattern'])
 
     # Velocity aberration
     if scale_factor <= 0.:
@@ -117,7 +136,7 @@ def set_metadata(meta=None, date=None, bandpass='F087', sca=7,
 
 def create_catalog(metadata=None, catalog_name=None, bandpasses=['F087'],
                    rng=None, nobj=1000, usecrds=True,
-                   coord=(roman.n_pix / 2, roman.n_pix / 2), radius=0.01):
+                   coord=None, radius=0.1):
     """
     Create catalog object.
 
@@ -139,6 +158,7 @@ def create_catalog(metadata=None, catalog_name=None, bandpasses=['F087'],
         location at which to generate catalog
         If around a particular location on the sky, a SkyCoord,
         otherwise a tuple (x, y) with the desired pixel coordinates.
+        None does the center of the SCA.
     x : float or quantity
         X [float] or RA [quantity] position at the center to simulate
     y : float or quantity
@@ -155,23 +175,30 @@ def create_catalog(metadata=None, catalog_name=None, bandpasses=['F087'],
     if catalog_name is None and metadata is None:
         raise ValueError('Must set either catalog_name or metadata')
 
+    if coord is None:
+        coord = (roman.n_pix / 2, roman.n_pix / 2)
+
+    distortion_file = parameters.reference_data["distortion"]
+    if distortion_file is not None:
+        dist_model = roman_datamodels.datamodels.DistortionRefModel(distortion_file)
+        distortion = dist_model.coordinate_distortion_transform
+    else:
+        distortion = None
+
+    if metadata is not None:
+        twcs = wcs.get_wcs(metadata, usecrds=usecrds, distortion=distortion)
+        if isinstance(coord, galsim.CelestialCoord):
+            coord = coord
+        elif not isinstance(coord, coordinates.SkyCoord):
+            coord = twcs.toWorld(galsim.PositionD(*coord))
+
     # Create catalog
     if catalog_name is None:
         # Create a catalog from scratch
         # Create wcs object
-        distortion_file = parameters.reference_data["distortion"]
-        if distortion_file is not None:
-            dist_model = roman_datamodels.datamodels.DistortionRefModel(distortion_file)
-            distortion = dist_model.coordinate_distortion_transform
-        else:
-            distortion = None
-        twcs = wcs.get_wcs(metadata, usecrds=usecrds, distortion=distortion)
-
-        if not isinstance(coord, coordinates.SkyCoord):
-            coord = twcs.toWorld(galsim.PositionD(*coord))
 
         cat = catalog.make_dummy_table_catalog(
-            coord, bandpasses=bandpasses, nobj=nobj, rng=rng)
+            coord, bandpasses=bandpasses, nobj=nobj, rng=rng, cosmos=True)
     else:
         # Set date
         if metadata:
@@ -184,7 +211,8 @@ def create_catalog(metadata=None, catalog_name=None, bandpasses=['F087'],
         else:
             date = None
 
-        cat = catalog.read_catalog(catalog_name, coord, date=date, bandpasses=bandpasses)
+        cat = catalog.read_catalog(catalog_name, coord, date=date,
+                                   radius=radius, bandpasses=bandpasses)
 
     return cat
 
@@ -275,7 +303,7 @@ def format_filename(filename, sca, bandpass=None, pretend_spectral=None):
     return pname.with_name(bname.format(*args, **kwargs))
 
 
-def simulate_image_file(args, metadata, cat, rng=None, persist=None):
+def simulate_image_file(args, metadata, cat, rng=None, persist=None, psf_keywords=dict(), **kwargs):
     """
     Simulate an image and write it to a file.
 
@@ -291,12 +319,16 @@ def simulate_image_file(args, metadata, cat, rng=None, persist=None):
         Uniform distribution based off of a random seed
     persist : romanisim.persistence.Persistence
         Persistence object
+    psf_keywords : dict
+        Keywords passed to the PSF generation routine. 
+        For STPSF, this dict can also include an "stpsf_options" dictionary to specify WFI object options (e.g. defocus, jitter).
     """
-
-    if getattr(args, 'webbpsf', False):
-        log.warning('Warning: webbpsf argument is deprecated, please use '
-                    '--stpsf instead.')
-        args.stpsf = args.webbpsf
+    if getattr(args, 'webbpsf', False) or getattr(args, 'stpsf', False):
+        log.warning('Warning: webbpsf and stpsf arguments are deprecated, please use '
+                    '"--psftype stpsf" instead.')
+        del args.stpsf
+        del args.webbpsf
+        args.psftype = 'stpsf'
 
     filename = format_filename(args.filename, args.sca, bandpass=args.bandpass,
                                pretend_spectral=args.pretend_spectral)
@@ -304,8 +336,8 @@ def simulate_image_file(args, metadata, cat, rng=None, persist=None):
     # Simulate image
     im, extras = image.simulate(
         metadata, cat, usecrds=args.usecrds,
-        stpsf=args.stpsf, level=args.level, persistence=persist,
-        rng=rng)
+        psftype=args.psftype, level=args.level, persistence=persist,
+        rng=rng, psf_keywords=psf_keywords, **kwargs)
 
     # Create metadata for simulation parameter
     romanisimdict = deepcopy(vars(args))
@@ -318,7 +350,10 @@ def simulate_image_file(args, metadata, cat, rng=None, persist=None):
     obsdata = parse_filename(basename)
     if obsdata is not None:
         im['meta']['observation'].update(**obsdata)
-    im['meta']['filename'] = stnode.Filename(basename)
+    im['meta']['observation']['visit_file_group'] = 0
+    im['meta']['observation']['visit_file_sequence'] = 1
+    im['meta']['observation']['visit_file_activity'] = '01'
+    im['meta']['filename'] = basename
 
     pretend_spectral = getattr(args, 'pretend_spectral', None)
     if pretend_spectral is not None:

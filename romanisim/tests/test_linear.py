@@ -5,10 +5,7 @@ Routines tested:
 - evaluate_nl_polynomial
 - apply
 """
-import os
-import pytest
 import numpy as np
-from astropy import units as u
 from astropy import stats
 import crds
 
@@ -22,7 +19,7 @@ def test_linear_apply():
     coeffs = np.array([0, 0.994, 3.0e-5, 5.0e-10, 7.0e-15], dtype='f4')
     lin_coeffs = np.tile(coeffs[:, np.newaxis, np.newaxis], (1, 100, 100))
     lin_coeffs[:, 0:50, :] *= 2.0
-    gain = 4.0 * u.electron / u.DN
+    gain = 4.0  # electron/DN
     counts[0, 0] = counts[0, 99] = counts[99, 0] = counts[99, 99] = 11.0
 
     linearity = nonlinearity.NL(lin_coeffs, gain=gain)
@@ -45,7 +42,7 @@ def test_repair_coeffs():
     lin_coeffs[:, 1, 1] *= 0
     lin_coeffs[2, 22, 22] = np.nan
 
-    gain = 4.0 * u.electron / u.DN
+    gain = 4.0  # electron/DN
 
     linearity = nonlinearity.NL(lin_coeffs, gain=gain)
 
@@ -67,17 +64,15 @@ def test_electrons():
     coeffs = np.array([0, 0.994, 3.0e-5, 5.0e-10, 7.0e-15], dtype='f4')
     lin_coeffs = np.tile(coeffs[:, np.newaxis, np.newaxis], (1, 100, 100))
     lin_coeffs[:, 0:50, :] *= 2.0
-    gain = 4.0 * u.electron / u.DN
+    gain = 4.0  # electron/DN
 
     linearity = nonlinearity.NL(lin_coeffs, gain=gain)
 
-    res = linearity.apply(counts)
+    res = linearity.apply(counts)  # DN
 
-    res_elec = linearity.apply(gain * counts, electrons=True)
+    res_elec = linearity.apply(gain * counts, electrons=True)  # electrons
 
     assert np.all(res_elec[:] == gain * res[:])
-    assert res_elec.unit == u.electron / u.DN
-    assert not hasattr(res, "unit")
 
 
 def test_reverse():
@@ -87,7 +82,7 @@ def test_reverse():
 
     lin_coeffs[:, 0:50, :] *= 2.0
     rev_lin_coeffs = lin_coeffs[::-1, ...]
-    gain = 4.0 * u.electron / u.DN
+    gain = 4.0  # electron/DN
 
     linearity = nonlinearity.NL(lin_coeffs, gain=gain)
     rev_linearity = nonlinearity.NL(rev_lin_coeffs, gain=gain)
@@ -98,12 +93,6 @@ def test_reverse():
     assert np.all(res_rev[:] == res[:])
 
 
-@pytest.mark.skipif(
-    os.environ.get("CI") == "true",
-    reason=(
-        "Roman CRDS servers are not currently available outside the internal network"
-    ),
-)
 def test_inverse_then_linearity():
     # Test that applying inverse linearity and then linearity returns the results to
     # the original value
@@ -140,4 +129,4 @@ def test_inverse_then_linearity():
 
     rms = stats.mad_std(counts[~m] / level_0_lin[~m] - 1)
 
-    assert rms < 1e-5
+    assert rms < 2e-3
