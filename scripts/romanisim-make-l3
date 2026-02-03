@@ -46,15 +46,11 @@ if __name__ == '__main__':
                         help='number of exposures on field.  Used only '
                         'to compute the effective read noise.')
     parser.add_argument('--rng_seed', type=int, default=None)
-<<<<<<< HEAD
-    parser.add_argument('--psf_fov_arcsec', type=float, default=5, help='size of PSF in arcsec')
-=======
     parser.add_argument('--psftype', type=str, default='galsim',
                         choices=['epsf', 'galsim', 'stpsf'],
                         help='Type of PSF generator to use.')
     parser.add_argument('--fastpointsources', action='store_true', default=False,
                         help='use fastpointsources')
->>>>>>> upstream-main
 
     args = parser.parse_args()
 
@@ -77,12 +73,9 @@ if __name__ == '__main__':
 
     if args.date is not None:
         metadata['coadd_info']['time_mean'] = Time(args.date, format='isot')
-<<<<<<< HEAD
-=======
     else:
         metadata['coadd_info']['time_mean'] = parameters.default_date
 
->>>>>>> upstream-main
     metadata['filename'] = os.path.basename(args.filename)
 
     cat = ris.create_catalog(metadata=metadata, catalog_name=args.catalog,
@@ -91,11 +84,7 @@ if __name__ == '__main__':
     im, extras = l3.simulate(
         (args.npix, args.npix), twcs, args.exptime, args.bandpass,
         cat, effreadnoise=args.effreadnoise, nexposures=args.nexposures,
-<<<<<<< HEAD
-        metadata=metadata, seed=args.rng_seed, rng=None, psf_fov_arcsec=args.psf_fov_arcsec)
-=======
         metadata=metadata, psftype=args.psftype, fastpointsources=args.fastpointsources)
->>>>>>> upstream-main
 
     # Create metadata for simulation parameter
     romanisimdict = deepcopy(vars(args))
