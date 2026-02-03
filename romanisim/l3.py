@@ -93,11 +93,7 @@ def add_objects_to_l3(l3_mos, source_cat, exptimes, xpos, ypos, psf,
 
 
 def inject_sources_into_l3(model, cat, x=None, y=None, psf=None, rng=None,
-<<<<<<< HEAD
-                           stpsf=True, exptimes=None, seed=None, fov_arcsec=10):
-=======
                            psftype='galsim', fastpointsources=True, exptimes=None, seed=None, return_info=False):
->>>>>>> upstream-main
     """Inject sources into an L3 image.
 
     This routine allows sources to be injected onto an existing L3 image.
@@ -164,11 +160,7 @@ def inject_sources_into_l3(model, cat, x=None, y=None, psf=None, rng=None,
     if psf is None:
         if (pixscalefrac > 1) or (pixscalefrac < 0):
             raise ValueError('weird pixscale!')
-<<<<<<< HEAD
-        psf = l3_psf(filter_name, pixscalefrac, stpsf=stpsf, chromatic=False, fov_arcsec=fov_arcsec)
-=======
         psf = l3_psf(filter_name, pixscalefrac, psftype=psftype, chromatic=False, date=model.meta.coadd_info.time_mean, variable=fastpointsources)
->>>>>>> upstream-main
     sca = romanisim.parameters.default_sca
     maggytoes = romanisim.bandpass.get_abflux(filter_name, sca)
     etomjysr = romanisim.bandpass.etomjysr(filter_name, sca) / pixscalefrac ** 2
@@ -199,14 +191,10 @@ def inject_sources_into_l3(model, cat, x=None, y=None, psf=None, rng=None,
 
     res_model.var_poisson = (res_model.data / Ct_all)
 
-<<<<<<< HEAD
-    return res, psf
-=======
     if return_info:
         return res_model, res
     else:
         return res_model
->>>>>>> upstream-main
 
 
 
@@ -300,14 +288,9 @@ def l3_psf(bandpass, scale=0, chromatic=False, **kw):
 
 def simulate(shape, wcs, efftimes, filter_name, catalog, nexposures=1,
              metadata={},
-<<<<<<< HEAD
-             effreadnoise=None, sky=None, psf=None, psf_fov_arcsec=5,
-             bandpass=None, seed=None, rng=None, stpsf=True,
-=======
              effreadnoise=None, sky=None, psf=None,
              bandpass=None, seed=None, rng=None, psftype='galsim', 
              fastpointsources=True,
->>>>>>> upstream-main
              **kwargs):
     """Simulate a sequence of observations on a field in different bandpasses.
 
@@ -443,14 +426,9 @@ def simulate(shape, wcs, efftimes, filter_name, catalog, nexposures=1,
     if psf is None:
         if (pixscalefrac > 1) or (pixscalefrac < 0):
             raise ValueError('weird pixscale!')
-<<<<<<< HEAD
-        psf = l3_psf(filter_name, pixscalefrac, stpsf=stpsf,
-                     chromatic=chromatic, fov_arcsec=psf_fov_arcsec)
-=======
         psf = l3_psf(filter_name, pixscalefrac, psftype=psftype, 
                      variable=fastpointsources, # enabling fastpointsources
                      chromatic=chromatic, date=meta['coadd_info']['time_mean'])
->>>>>>> upstream-main
 
     # Simulate mosaic cps
     mosaic, extras = simulate_cps(
